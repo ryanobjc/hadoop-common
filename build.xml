@@ -27,7 +27,7 @@
  
   <property name="Name" value="Hadoop"/>
   <property name="name" value="hadoop"/>
-  <property name="version" value="0.20.3-dev"/>
+  <property name="version" value="0.20.2"/>
   <property name="final.name" value="${name}-${version}"/>
   <property name="year" value="2009"/>
 
@@ -81,6 +81,7 @@
   <property name="build.docs.cn" value="${build.dir}/docs/cn"/>
   <property name="build.javadoc" value="${build.docs}/api"/>
   <property name="build.javadoc.dev" value="${build.docs}/dev-api"/>
+  <property name="build.javadoc.test.dev" value="${build.docs}/dev-test-api"/>
   <property name="build.encoding" value="ISO-8859-1"/>
   <property name="install.c++" value="${build.dir}/c++/${build.platform}"/>
   <property name="install.c++.examples" 
@@ -160,16 +161,27 @@
   <property name="build.ivy.lib.dir" location="${build.ivy.dir}/lib" />
   <property name="common.ivy.lib.dir" location="${build.ivy.lib.dir}/${ant.project.name}/common"/>
   <property name="build.ivy.report.dir" location="${build.ivy.dir}/report" />
+
   <property name="build.ivy.maven.dir" location="${build.ivy.dir}/maven" />
   <property name="build.ivy.maven.pom" location="${build.ivy.maven.dir}/hadoop-core-${hadoop.version}.pom" />
-  <property name="build.ivy.maven.jar" location="${build.ivy.maven.dir}/hadoop-core-${hadoop.version}.jar" />
+  <property name="build.ivy.maven.test.pom" location="${build.ivy.maven.dir}/hadoop-test-${hadoop.version}.pom" />
 
+  <property name="build.ivy.maven.jar" location="${build.ivy.maven.dir}/hadoop-core-${hadoop.version}.jar" />
+  <property name="build.ivy.maven.src.jar" location="${build.ivy.maven.dir}/hadoop-core-${hadoop.version}-sources.jar" />
+  <property name="build.ivy.maven.javadoc.jar" location="${build.ivy.maven.dir}/hadoop-core-${hadoop.version}-javadoc.jar"/>
+
+  <property name="build.ivy.maven.test.jar" location="${build.ivy.maven.dir}/hadoop-test-${hadoop.version}.jar" />
+  <property name="build.ivy.maven.test.src.jar" location="${build.ivy.maven.dir}/hadoop-test-${hadoop.version}-sources.jar" />
+  <property name="build.ivy.maven.test.javadoc.jar" location="${build.ivy.maven.dir}/hadoop-test-${hadoop.version}-javadoc.jar"/>
+
+ 
   <!--this is the naming policy for artifacts we want pulled down-->
   <property name="ivy.artifact.retrieve.pattern" value="${ant.project.name}/[conf]/[artifact]-[revision].[ext]"/>
 
   <!--this is how artifacts that get built are named-->
   <property name="ivy.publish.pattern" value="hadoop-[revision]-core.[ext]"/>
   <property name="hadoop.jar" location="${build.dir}/hadoop-${hadoop.version}-core.jar" />
+  <property name="hadoop.src.jar" location="${build.dir}/hadoop-${hadoop.version}-sources.jar" />
 
   <!-- jdiff.home property set -->
   <property name="jdiff.home" value="${build.ivy.lib.dir}/${ant.project.name}/jdiff"/>
@@ -528,10 +540,23 @@
   <!-- ================================================================== -->
   <!--                                                                    -->
   <!-- ================================================================== -->
-  <target name="jar" depends="compile-core" description="Make hadoop.jar">
+  <target name="jar" depends="compile-core,javadoc-dev" description="Make hadoop.jar">
     <tar compression="gzip" destfile="${build.classes}/bin.tgz">
       <tarfileset dir="bin" mode="755"/>
     </tar>
+    <jar jarfile="${build.dir}/${final.name}-sources.jar">
+      <fileset dir="${core.src.dir}" 
+	       includes="**/*.java"/>
+      <fileset dir="${mapred.src.dir}"
+	       includes="**/*.java"/>
+      <fileset dir="${hdfs.src.dir}"
+	       includes="**/*.java"/>
+      <fileset dir="${examples.dir}"
+	       includes="**/*.java"/>
+    </jar>
+    <jar jarfile="${build.dir}/${final.name}-javadoc.jar"
+	 basedir="${build.javadoc.dev}">
+    </jar>
     <jar jarfile="${build.dir}/${final.name}-core.jar"
          basedir="${build.classes}">
       <manifest>
@@ -684,7 +709,14 @@
   <!-- ================================================================== -->
   <!--                                                                    -->
   <!-- ================================================================== -->
-  <target name="jar-test" depends="compile-core-test" description="Make hadoop-test.jar">
+  <target name="jar-test" depends="javadoc-dev,compile-core-test" description="Make hadoop-test.jar">
+    <jar jarfile="${build.dir}/${final.name}-test-sources.jar"
+	 basedir="${test.src.dir}"
+	 includes="**/*.java">
+    </jar>
+    <jar jarfile="${build.dir}/${final.name}-test-javadoc.jar"
+	 basedir="${build.javadoc.test.dev}">
+    </jar>
     <jar jarfile="${build.dir}/${final.name}-test.jar"
          basedir="${test.build.classes}">
          <manifest>
@@ -908,8 +940,10 @@
     <fail message="'java5.home' is not defined.  Forrest requires Java 5.  Please pass -Djava5.home=&lt;base of Java 5 distribution&gt; to Ant on the command-line." />
   </target>
 	
-  <target name="javadoc-dev" description="Generate javadoc for hadoop developers">
+  <target name="javadoc-dev" description="Generate javadoc for hadoop developers" depends="init">
     <mkdir dir="${build.javadoc.dev}"/>
+    <mkdir dir="${build.javadoc.test.dev}" />
+
     <javadoc
       overview="${core.src.dir}/overview.html"
       packagenames="org.apache.hadoop.*"
@@ -920,6 +954,7 @@
       windowtitle="${Name} ${version} API"
       doctitle="${Name} ${version} Developer API"
       bottom="Copyright &amp;copy; ${year} The Apache Software Foundation"
+      maxmemory="256m"
       >
         <packageset dir="${core.src.dir}"/>
         <packageset dir="${mapred.src.dir}"/>
@@ -947,6 +982,31 @@
        <group title="contrib: DataJoin" packages="org.apache.hadoop.contrib.utils.join*"/>
        <group title="contrib: Index" packages="org.apache.hadoop.contrib.index*"/>
 
+    </javadoc>
+    <javadoc
+      packagenames="org.apache.hadoop.*"
+      destdir="${build.javadoc.test.dev}"
+      author="true"
+      version="true"
+      use="true"
+      windowtitle="${Name} ${version} API"
+      doctitle="${Name} ${version} Developer API"
+      bottom="Copyright &amp;copy; ${year} The Apache Software Foundation"
+      maxmemory="256m"
+      >
+        <packageset dir="${test.src.dir}"/>
+
+        <link href="${javadoc.link.java}"/>
+
+        <classpath >
+          <path refid="classpath" />
+          <fileset dir="src/contrib/">
+            <include name="*/lib/*.jar" />
+          </fileset>
+          <pathelement path="${java.class.path}"/>
+        </classpath>
+
+    	<group title="Test" packages="org.apache.*"/>
     </javadoc>
   </target>	
 
@@ -1760,7 +1820,7 @@
 
   </target>
 
-  <target name="ready-to-publish" depends="jar,assert-hadoop-jar-exists,ivy-resolve"/>
+  <target name="ready-to-publish" depends="jar,jar-test,assert-hadoop-jar-exists,ivy-resolve"/>
 
   <target name="ivy-publish-local" depends="ready-to-publish,ivy-resolve">
     <ivy:publish
@@ -1790,6 +1850,25 @@
     <copy file="${hadoop.jar}"
       tofile="${build.ivy.maven.jar}"/>
     <checksum file="${build.ivy.maven.jar}" algorithm="md5"/>
+    <copy file="${hadoop.src.jar}"
+      tofile="${build.ivy.maven.src.jar}"/>
+    <checksum file="${build.ivy.maven.src.jar}" algorithm="md5"/>
+
+    <copy file="${build.dir}/${final.name}-test.jar"
+	  toFile="${build.ivy.maven.test.jar}"/>
+    <checksum file="${build.ivy.maven.test.jar}" algorithm="md5"/>
+    <copy file="${build.dir}/${final.name}-test-sources.jar"
+	  toFile="${build.ivy.maven.test.src.jar}"/>
+    <checksum file="${build.ivy.maven.test.src.jar}" algorithm="md5"/>
+
+    <copy file="${build.dir}/${final.name}-javadoc.jar"
+	  toFile="${build.ivy.maven.javadoc.jar}" />
+    <checksum file="${build.ivy.maven.javadoc.jar}" algorithm="md5"/>
+
+    <copy file="${build.dir}/${final.name}-test-javadoc.jar"
+	  toFile="${build.ivy.maven.test.javadoc.jar}" />
+    <checksum file="${build.ivy.maven.test.javadoc.jar}" algorithm="md5"/>
+
   </target>
 
   <target name="copypom" depends="ivy-init-dirs">
@@ -1805,6 +1884,10 @@
    <expandingcopy file="ivy/hadoop-core.pom"
       tofile="${build.ivy.maven.pom}"/>
    <checksum file="${build.ivy.maven.pom}" algorithm="md5"/>
+
+   <expandingcopy file="ivy/hadoop-test.pom"
+      tofile="${build.ivy.maven.test.pom}"/>
+   <checksum file="${build.ivy.maven.test.pom}" algorithm="md5"/>
   </target>
 
   <target name="maven-artifacts" depends="copy-jar-to-maven,copypom" />
