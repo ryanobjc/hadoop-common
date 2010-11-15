@@ -471,13 +471,6 @@ class BlockReceiver implements java.io.Closeable, FSConstants {
             checksumOut.write(pktBuf, checksumOff, checksumLen);
           }
           datanode.myMetrics.bytesWritten.inc(len);
-
-          /// flush entire packet before sending ack
-          flush();
-          
-          // update length only after flush to disk
-          datanode.data.setVisibleLength(block, offsetInBlock);
-          
         }
       } catch (IOException iex) {
         datanode.checkDiskError(iex);
@@ -485,6 +478,12 @@ class BlockReceiver implements java.io.Closeable, FSConstants {
       }
     }
 
+    /// flush entire packet before sending ack
+    flush();
+    
+    // update length only after flush to disk
+    datanode.data.setVisibleLength(block, offsetInBlock);
+    
     // put in queue for pending acks
     if (responder != null) {
       ((PacketResponder)responder.getRunnable()).enqueue(seqno,
@@ -758,50 +757,134 @@ class BlockReceiver implements java.io.Closeable, FSConstants {
       notifyAll();
     }
 
+    private synchronized void lastDataNodeRun() {
+      long lastHeartbeat = System.currentTimeMillis();
+      boolean lastPacket = false;
+
+      while (running && datanode.shouldRun && !lastPacket) {
+        long now = System.currentTimeMillis();
+        try {
+
+            // wait for a packet to be sent to downstream datanode
+            while (running && datanode.shouldRun && ackQueue.size() == 0) {
+              long idle = now - lastHeartbeat;
+              long timeout = (datanode.socketTimeout/2) - idle;
+              if (timeout <= 0) {
+                timeout = 1000;
+              }
+              try {
+                wait(timeout);
+              } catch (InterruptedException e) {
+                if (running) {
+                  LOG.info("PacketResponder " + numTargets +
+                           " for block " + block + " Interrupted.");
+                  running = false;
+                }
+                break;
+              }
+          
+              // send a heartbeat if it is time.
+              now = System.currentTimeMillis();
+              if (now - lastHeartbeat > datanode.socketTimeout/2) {
+                PipelineAck.HEART_BEAT.write(replyOut);  // send heart beat
+                replyOut.flush();
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("PacketResponder " + numTargets +
+                            " for block " + block + 
+                            " sent a heartbeat");
+                }
+                lastHeartbeat = now;
+              }
+            }
+
+            if (!running || !datanode.shouldRun) {
+              break;
+            }
+            Packet pkt = ackQueue.removeFirst();
+            long expected = pkt.seqno;
+            notifyAll();
+            LOG.debug("PacketResponder " + numTargets +
+                      " for block " + block + 
+                      " acking for packet " + expected);
+
+            // If this is the last packet in block, then close block
+            // file and finalize the block before responding success
+            if (pkt.lastPacketInBlock) {
+              if (!receiver.finalized) {
+                receiver.close();
+                block.setNumBytes(receiver.offsetInBlock);
+                datanode.data.finalizeBlock(block);
+                datanode.myMetrics.blocksWritten.inc();
+                datanode.notifyNamenodeReceivedBlock(block, 
+                    DataNode.EMPTY_DEL_HINT);
+                if (ClientTraceLog.isInfoEnabled() &&
+                    receiver.clientName.length() > 0) {
+                  ClientTraceLog.info(String.format(DN_CLIENTTRACE_FORMAT,
+                        receiver.inAddr, receiver.myAddr, block.getNumBytes(),
+                        "HDFS_WRITE", receiver.clientName,
+                        datanode.dnRegistration.getStorageID(), block));
+                } else {
+                  LOG.info("Received block " + block + 
+                           " of size " + block.getNumBytes() + 
+                           " from " + receiver.inAddr);
+                }
+              }
+              lastPacket = true;
+            }
+
+            new PipelineAck(expected, new short[]{
+                DataTransferProtocol.OP_STATUS_SUCCESS}).write(replyOut);
+            replyOut.flush();
+        } catch (Exception e) {
+          LOG.warn("IOException in BlockReceiver.lastNodeRun: ", e);
+          if (running) {
+            try {
+              datanode.checkDiskError(e); // may throw an exception here
+            } catch (IOException ioe) {
+              LOG.warn("DataNode.chekDiskError failed in lastDataNodeRun with: ",
+                  ioe);
+            }
+            LOG.info("PacketResponder " + block + " " + numTargets + 
+                     " Exception " + StringUtils.stringifyException(e));
+            running = false;
+          }
+        }
+      }
+      LOG.info("PacketResponder " + numTargets + 
+               " for block " + block + " terminating");
+    }
+
     /**
      * Thread to process incoming acks.
      * @see java.lang.Runnable#run()
      */
     public void run() {
+
+      // If this is the last datanode in pipeline, then handle differently
+      if (numTargets == 0) {
+        lastDataNodeRun();
+        return;
+      }
+
       boolean lastPacketInBlock = false;
       boolean isInterrupted = false;
       while (running && datanode.shouldRun && !lastPacketInBlock) {
 
         try {
-          /**
-           * Sequence number -2 is a special value that is used when
-           * a DN fails to read an ack from a downstream. In this case,
-           * it needs to tell the client that there's been an error downstream
-           * but has no valid sequence number to use. Thus, -2 is used
-           * as an UNKNOWN value.
-           */
-          long expected = PipelineAck.UNKOWN_SEQNO;
-          long seqno = PipelineAck.UNKOWN_SEQNO;;
+            /**
+             * Sequence number -2 is a special value that is used when
+             * a DN fails to read an ack from a downstream. In this case,
+             * it needs to tell the client that there's been an error downstream
+             * but has no valid sequence number to use. Thus, -2 is used
+             * as an UNKNOWN value.
+             */
+            long expected = -2;
+            long seqno = -2;
 
-          PipelineAck ack = new PipelineAck();
-          boolean localMirrorError = mirrorError;
-          try { 
-            Packet pkt = null;
-            synchronized (this) {
-              // wait for a packet to arrive
-              while (running && datanode.shouldRun && ackQueue.size() == 0) {
-                if (LOG.isDebugEnabled()) {
-                  LOG.debug("PacketResponder " + numTargets + 
-                            " seqno = " + seqno +
-                            " for block " + block +
-                            " waiting for local datanode to finish write.");
-                  }
-                  wait();
-                }
-                if (!running || !datanode.shouldRun) {
-                  break;
-                }
-                pkt = ackQueue.removeFirst();
-                expected = pkt.seqno;
-                notifyAll();
-              }
-              // receive an ack if DN is not the last one in the pipeline
-              if (numTargets > 0 && !localMirrorError) {
+            PipelineAck ack = new PipelineAck();
+            boolean localMirrorError = mirrorError;
+            try { 
+              if (!localMirrorError) {
                 // read an ack from downstream datanode
                 ack.readFields(mirrorIn, numTargets);
                 if (LOG.isDebugEnabled()) {
@@ -809,15 +892,34 @@ class BlockReceiver implements java.io.Closeable, FSConstants {
                       " for block " + block + " got " + ack);
                 }
                 seqno = ack.getSeqno();
-                // verify seqno
-                if (seqno != expected) {
-                  throw new IOException("PacketResponder " + numTargets +
-                      " for block " + block +
-                      " expected seqno:" + expected +
-                      " received:" + seqno);
+              }
+              if (seqno >= 0 || localMirrorError) {
+                Packet pkt = null;
+                synchronized (this) {
+                  while (running && datanode.shouldRun && ackQueue.size() == 0) {
+                    if (LOG.isDebugEnabled()) {
+                      LOG.debug("PacketResponder " + numTargets + 
+                                " seqno = " + seqno +
+                                " for block " + block +
+                                " waiting for local datanode to finish write.");
+                    }
+                    wait();
+                  }
+                  if (!running || !datanode.shouldRun) {
+                    break;
+                  }
+                  pkt = ackQueue.removeFirst();
+                  expected = pkt.seqno;
+                  notifyAll();
+                  if (seqno != expected && !localMirrorError) {
+                    throw new IOException("PacketResponder " + numTargets +
+                                          " for block " + block +
+                                          " expected seqno:" + expected +
+                                          " received:" + seqno);
+                  }
+                  lastPacketInBlock = pkt.lastPacketInBlock;
                 }
               }
-              lastPacketInBlock = pkt.lastPacketInBlock;
             } catch (InterruptedException ine) {
               isInterrupted = true;
             } catch (IOException ioe) {
@@ -868,21 +970,25 @@ class BlockReceiver implements java.io.Closeable, FSConstants {
               }
             }
 
-            // construct my ack message
-            short[] replies = null;
-            if (mirrorError) { // no ack is read
-            	replies = new short[2];
-            	replies[0] = DataTransferProtocol.OP_STATUS_SUCCESS;
-            	replies[1] = DataTransferProtocol.OP_STATUS_ERROR;
+            PipelineAck replyAck;
+            if (seqno == PipelineAck.HEART_BEAT.getSeqno()) {
+              replyAck = ack;  // continue to send keep alive
             } else {
-            	short ackLen = numTargets == 0 ? 0 : ack.getNumOfReplies();
-            	replies = new short[1+ackLen];
-            	replies[0] = DataTransferProtocol.OP_STATUS_SUCCESS;
-            	for (int i=0; i<ackLen; i++) {
-            		replies[i+1] = ack.getReply(i);
-            	}
+              // construct my ack message
+              short[] replies = null;
+              if (mirrorError) { // no ack is read
+                replies = new short[2];
+                replies[0] = DataTransferProtocol.OP_STATUS_SUCCESS;
+                replies[1] = DataTransferProtocol.OP_STATUS_ERROR;
+              } else {
+                replies = new short[1+ack.getNumOfReplies()];
+                replies[0] = DataTransferProtocol.OP_STATUS_SUCCESS;
+                for (int i=0; i<ack.getNumOfReplies(); i++) {
+                  replies[i+1] = ack.getReply(i);
+                }
+              }
+              replyAck = new PipelineAck(expected, replies);
             }
-            PipelineAck replyAck = new PipelineAck(expected, replies);
  
             // send my ack back to upstream datanode
             replyAck.write(replyOut);
