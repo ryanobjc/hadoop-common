@@ -188,25 +188,32 @@
   <property name="hadoop-core-pom-template.xml" 
     location="${ivy.dir}/hadoop-core-pom-template.xml"/>
   <property name="hadoop-core.jar" location="${build.dir}/${core.final.name}.jar"/>
+  <property name="hadoop-core-sources.jar" location="${build.dir}/${core.final.name}-sources.jar"/>
   <property name="hadoop-test.pom" location="${ivy.dir}/hadoop-test-pom.xml"/>
   <property name="hadoop-test-pom-template.xml" 
     location="${ivy.dir}/hadoop-test-pom-template.xml" />
   <property name="hadoop-test.jar" location="${build.dir}/${test.final.name}.jar"/>
+  <property name="hadoop-test-sources.jar" location="${build.dir}/${test.final.name}-sources.jar"/>
   <property name="hadoop-tools.pom" location="${ivy.dir}/hadoop-tools-pom.xml"/>
   <property name="hadoop-tools-pom-template.xml" 
     location="${ivy.dir}/hadoop-tools-pom-template.xml" />
   <property name="hadoop-tools.jar" location="${build.dir}/${tools.final.name}.jar"/>
+  <property name="hadoop-tools-sources.jar" location="${build.dir}/${tools.final.name}-sources.jar"/>
   <property name="hadoop-examples.pom" location="${ivy.dir}/hadoop-examples-pom.xml"/>
   <property name="hadoop-examples-pom-template.xml" 
     location="${ivy.dir}/hadoop-examples-pom-template.xml"/>
   <property name="hadoop-examples.jar" 
     location="${build.dir}/${examples.final.name}.jar"/>
+  <property name="hadoop-examples-sources.jar" 
+    location="${build.dir}/${examples.final.name}-sources.jar"/>
   <property name="hadoop-streaming.pom" 
     location="${ivy.dir}/hadoop-streaming-pom.xml"/>
   <property name="hadoop-streaming-pom-template.xml" 
     location="${ivy.dir}/hadoop-streaming-pom-template.xml"/>
   <property name="hadoop-streaming.jar" 
     location="${build.dir}/contrib/streaming/${streaming.final.name}.jar"/>
+  <property name="hadoop-streaming-sources.jar" 
+    location="${build.dir}/contrib/streaming/${streaming.final.name}-sources.jar"/>
    
   <!--this is the naming policy for artifacts we want pulled down-->
   <property name="ivy.artifact.retrieve.pattern" 
@@ -1820,7 +1827,29 @@
          classpathref="mvn-ant-task.classpath"/>
   </target>  
 
-  <target name="mvn-install" depends="mvn-taskdef,bin-package,set-version"
+  <target name="jar-sources" depends="init" description="Jar Sources">
+    <!-- make sure target dirs exist -->
+    <mkdir dir="${build.dir}" />
+    <mkdir dir="${build.dir}/contrib/streaming" />
+
+    <jar jarfile="${hadoop-core-sources.jar}"
+         basedir="${core.src.dir}"
+	 includes="**/*.java" />
+    <jar jarfile="${hadoop-test-sources.jar}"
+         basedir="${test.src.dir}"
+	 includes="**/*.java" />
+    <jar jarfile="${hadoop-examples-sources.jar}"
+         basedir="${examples.dir}"
+	 includes="**/*.java" />
+    <jar jarfile="${hadoop-tools-sources.jar}"
+         basedir="${tools.src}"
+	 includes="**/*.java" />
+    <jar jarfile="${hadoop-streaming-sources.jar}"
+         basedir="${contrib.dir}/streaming/src/java"
+	 includes="**/*.java" />
+  </target>
+
+  <target name="mvn-install" depends="mvn-taskdef,bin-package,set-version,jar-sources"
      description="To install hadoop core and test jars to local filesystem's m2 cache">
      <artifact:pom file="${hadoop-core.pom}" id="hadoop.core"/>
      <artifact:pom file="${hadoop-test.pom}" id="hadoop.test"/>
@@ -1830,22 +1859,27 @@
 
      <artifact:install file="${hadoop-core.jar}">
         <pom refid="hadoop.core"/>
+        <attach file="${hadoop-core-sources.jar}" classifier="sources" />
      </artifact:install>
      <artifact:install file="${hadoop-test.jar}">
         <pom refid="hadoop.test"/>
+        <attach file="${hadoop-test-sources.jar}" classifier="sources" />
      </artifact:install>
      <artifact:install file="${hadoop-tools.jar}">
         <pom refid="hadoop.tools"/>
+        <attach file="${hadoop-tools-sources.jar}" classifier="sources" />
      </artifact:install>
      <artifact:install file="${hadoop-examples.jar}">
         <pom refid="hadoop.examples"/>
+        <attach file="${hadoop-examples-sources.jar}" classifier="sources" />
      </artifact:install>
      <artifact:install file="${hadoop-streaming.jar}">
         <pom refid="hadoop.streaming"/>
+        <attach file="${hadoop-streaming-sources.jar}" classifier="sources" />
      </artifact:install>
   </target>
 
-  <target name="mvn-deploy" depends="mvn-taskdef, bin-package, set-version, signanddeploy, simpledeploy"
+  <target name="mvn-deploy" depends="mvn-taskdef, bin-package, set-version, signanddeploy, simpledeploy, jar-sources"
      description="To deploy hadoop core and test jar's to apache maven repository"/>
 
   <target name="signanddeploy" if="staging" depends="sign">
@@ -1861,30 +1895,35 @@
          <pom refid="hadoop.core"/>
          <attach file="${hadoop-core.jar}.asc" type="jar.asc"/>
          <attach file="${hadoop-core.pom}.asc" type="pom.asc"/>
+         <attach file="${hadoop-core-sources.jar}" classifier="sources" />
      </artifact:deploy>
      <artifact:deploy file="${hadoop-test.jar}">
          <remoteRepository id="apache.staging.https" url="${asfstagingrepo}"/> 
          <pom refid="hadoop.core.test"/>
          <attach file="${hadoop-test.jar}.asc" type="jar.asc"/>
          <attach file="${hadoop-test.pom}.asc" type="pom.asc"/>
+         <attach file="${hadoop-test-sources.jar}" classifier="sources" />
      </artifact:deploy>
      <artifact:deploy file="${hadoop-tools.jar}">
          <remoteRepository id="apache.staging.https" url="${asfstagingrepo}"/> 
          <pom refid="hadoop.tools"/>
          <attach file="${hadoop-tools.jar}.asc" type="jar.asc"/>
          <attach file="${hadoop-tools.pom}.asc" type="pom.asc"/>
+         <attach file="${hadoop-tools-sources.jar}" classifier="sources" />
      </artifact:deploy>
      <artifact:deploy file="${hadoop-examples.jar}">
          <remoteRepository id="apache.staging.https" url="${asfstagingrepo}"/> 
          <pom refid="hadoop.examples"/>
          <attach file="${hadoop-examples.jar}.asc" type="jar.asc"/>
          <attach file="${hadoop-examples.pom}.asc" type="pom.asc"/>
+         <attach file="${hadoop-examples-sources.jar}" classifier="sources" />
      </artifact:deploy>
      <artifact:deploy file="${hadoop-streaming.jar}">
          <remoteRepository id="apache.staging.https" url="${asfstagingrepo}"/> 
          <pom refid="hadoop.streaming"/>
          <attach file="${hadoop-streaming.jar}.asc" type="jar.asc"/>
          <attach file="${hadoop-streaming.pom}.asc" type="pom.asc"/>
+         <attach file="${hadoop-streaming-sources.jar}" classifier="sources" />
      </artifact:deploy>
   </target>
 
@@ -1942,22 +1981,27 @@
      <artifact:deploy file="${hadoop-core.jar}">
          <remoteRepository id="apache.snapshots.https" url="${asfsnapshotrepo}"/>
          <pom refid="hadoop.core"/>
+         <attach file="${hadoop-core-sources.jar}" classifier="sources" />
      </artifact:deploy>
      <artifact:deploy file="${hadoop-test.jar}">
          <remoteRepository id="apache.snapshots.https" url="${asfsnapshotrepo}"/>
          <pom refid="hadoop.test"/>
+         <attach file="${hadoop-test-sources.jar}" classifier="sources" />
      </artifact:deploy> 
      <artifact:deploy file="${hadoop-examples.jar}">
          <remoteRepository id="apache.snapshots.https" url="${asfsnapshotrepo}"/>
          <pom refid="hadoop.examples"/>
+         <attach file="${hadoop-examples-sources.jar}" classifier="sources" />
      </artifact:deploy>
      <artifact:deploy file="${hadoop-tools.jar}">
          <remoteRepository id="apache.snapshots.https" url="${asfsnapshotrepo}"/>
          <pom refid="hadoop.tools"/>
+         <attach file="${hadoop-tools-sources.jar}" classifier="sources" />
      </artifact:deploy>
      <artifact:deploy file="${hadoop-streaming.jar}">
          <remoteRepository id="apache.snapshots.https" url="${asfsnapshotrepo}"/>
          <pom refid="hadoop.streaming"/>
+         <attach file="${hadoop-streaming-sources.jar}" classifier="sources" />
      </artifact:deploy>
   </target>
 
